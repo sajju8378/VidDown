@@ -1,0 +1,6 @@
+{
+  "name": "MediaDrop - Android Media Downloader",
+  "description": "Personal Kotlin + Jetpack Compose Android app that intercepts shared direct media links (MP4/MP3/Images) with progress and folder selection, complete with Gradle setup and GitHub Actions signed APK workflow.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
