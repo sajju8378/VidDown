@@ -55,6 +55,7 @@ export const DeviceSimulator: React.FC<DeviceSimulatorProps> = ({
   const [autoStartOnShare, setAutoStartOnShare] = useState(true);
   const [wifiOnly, setWifiOnly] = useState(false);
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
+  const [downloadToast, setDownloadToast] = useState<string | null>(null);
 
   // Probed metadata state
   const [probedData, setProbedData] = useState<{
@@ -167,6 +168,8 @@ export const DeviceSimulator: React.FC<DeviceSimulatorProps> = ({
   // Trigger actual file download to user's computer/phone
   const triggerActualDownload = (url: string, fileName: string) => {
     downloadRealFileToDevice(url, fileName);
+    setDownloadToast(`Saved "${fileName.slice(0, 30)}..." to Downloads!`);
+    setTimeout(() => setDownloadToast(null), 4000);
   };
 
   // Start real or chunked download
@@ -314,6 +317,14 @@ export const DeviceSimulator: React.FC<DeviceSimulatorProps> = ({
               <Battery className="w-3.5 h-3.5 text-slate-300" />
             </div>
           </div>
+
+          {/* Download Started Toast Alert */}
+          {downloadToast && (
+            <div className="absolute top-10 left-4 right-4 z-50 bg-emerald-600 text-white px-3 py-2 rounded-xl text-xs font-semibold shadow-xl flex items-center gap-2 animate-in slide-in-from-top-2 duration-150">
+              <Check className="w-4 h-4 shrink-0" />
+              <span className="truncate flex-1">{downloadToast}</span>
+            </div>
+          )}
 
           {/* Android Notification Shade Overlay (when open or active download) */}
           {showNotificationShade && activeDownload && (

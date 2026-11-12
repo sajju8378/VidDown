@@ -9,6 +9,9 @@
     <meta property="og:description" content="Personal Kotlin + Jetpack Compose Android app that intercepts shared direct media links (MP4/MP3/Images) with progress and folder selection, complete with Gradle setup and GitHub Actions signed APK workflow." />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%236366f1'><path d='M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm1 14.59V11a1 1 0 0 0-2 0v5.59l-2.29-2.3a1 1 0 0 0-1.42 1.42l4 4a1 1 0 0 0 1.42 0l4-4a1 1 0 0 0-1.42-1.42z'/></svg>" />
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -25,14 +28,15 @@
         if (root && root.children.length > 0) return;
 
         window.__bundle_loaded = true;
+        const cacheBuster = '?v=' + Date.now();
         const cssLink = document.createElement('link');
         cssLink.rel = 'stylesheet';
-        cssLink.href = './assets/bundle.css';
+        cssLink.href = './assets/bundle.css' + cacheBuster;
         document.head.appendChild(cssLink);
 
         const jsScript = document.createElement('script');
         jsScript.type = 'module';
-        jsScript.src = './assets/bundle.js';
+        jsScript.src = './assets/bundle.js' + cacheBuster;
         document.body.appendChild(jsScript);
       }
 
@@ -42,7 +46,7 @@
         }
       }, true);
 
-      setTimeout(ensureStaticBundle, 350);
+      setTimeout(ensureStaticBundle, 300);
     </script>
   </body>
 </html>
