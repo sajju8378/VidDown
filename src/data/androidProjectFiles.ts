@@ -2,63 +2,6 @@ import { AndroidProjectFile } from '../types';
 
 export const ANDROID_PROJECT_FILES: AndroidProjectFile[] = [
   {
-    path: '.github/workflows/deploy-pages.yml',
-    category: 'ci',
-    description: 'GitHub Actions workflow to automatically build and deploy the web companion to GitHub Pages',
-    content: `name: Deploy Web Companion to GitHub Pages
-
-on:
-  push:
-    branches: [ main, master ]
-  workflow_dispatch:
-
-permissions:
-  contents: read
-  pages: write
-  id-token: write
-
-concurrency:
-  group: 'pages'
-  cancel-in-progress: true
-
-jobs:
-  deploy:
-    environment:
-      name: github-pages
-      url: \${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm install
-
-      - name: Build Web App
-        run: npm run build
-
-      - name: Setup Pages
-        uses: actions/configure-pages@v5
-
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: './dist'
-        continue-on-error: true
-
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
-        continue-on-error: true
-`,
-  },
-  {
     path: '.github/workflows/build-signed-apk.yml',
     category: 'ci',
     description: 'GitHub Actions workflow to automatically build Debug APK and signed Release APK',
@@ -109,20 +52,26 @@ jobs:
 
       # Step 2: Build Signed Release APK
       - name: Decode Keystore from Secrets (Optional)
-        if: "\${{ secrets.RELEASE_KEYSTORE_BASE64 != '' }}"
         env:
           KEYSTORE_BASE64: \${{ secrets.RELEASE_KEYSTORE_BASE64 }}
         run: |
-          mkdir -p app/keystore
-          echo "$KEYSTORE_BASE64" | base64 --decode > app/keystore/release.jks
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "Decoding custom release keystore..."
+            mkdir -p app/keystore
+            echo "$KEYSTORE_BASE64" | base64 --decode > app/keystore/release.jks
+          else
+            echo "No custom keystore secret provided. Release will use debug signature fallback."
+          fi
 
       - name: Build Release APK
         env:
-          SIGNING_KEYSTORE_PATH: \${{ secrets.RELEASE_KEYSTORE_BASE64 != '' && 'keystore/release.jks' || '' }}
           KEYSTORE_PASSWORD: \${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: \${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: \${{ secrets.KEY_PASSWORD }}
         run: |
+          if [ -f "app/keystore/release.jks" ]; then
+            export SIGNING_KEYSTORE_PATH="keystore/release.jks"
+          fi
           gradle assembleRelease --no-daemon --stacktrace
 
       - name: Verify Release APK Output

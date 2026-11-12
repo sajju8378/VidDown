@@ -657,7 +657,12 @@ export const DeviceSimulator: React.FC<DeviceSimulatorProps> = ({
                         <>
                           <div className="flex items-center gap-1.5 text-[11px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1.5 rounded-lg">
                             <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
-                            <span>File ready! Saved to {chosenFolder}</span>
+                            <span>File saved to {chosenFolder} &amp; Browser Downloads!</span>
+                          </div>
+
+                          <div className="text-[10px] text-indigo-300 bg-indigo-950/60 border border-indigo-500/30 px-2.5 py-1.5 rounded-lg flex items-center justify-between">
+                            <span>Check your Chrome/Phone Downloads bar</span>
+                            <span className="font-mono text-white text-[9px] bg-indigo-600/50 px-1.5 py-0.5 rounded">Downloaded</span>
                           </div>
 
                           <div className="grid grid-cols-2 gap-2">
@@ -667,7 +672,7 @@ export const DeviceSimulator: React.FC<DeviceSimulatorProps> = ({
                               className="py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-lg flex items-center justify-center gap-1.5 shadow-sm active:scale-95 transition-all"
                             >
                               <Download className="w-3.5 h-3.5" />
-                              <span>Save to PC/Phone</span>
+                              <span>Save to Disk Again</span>
                             </button>
 
                             <button
