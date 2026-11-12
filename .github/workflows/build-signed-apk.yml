@@ -27,10 +27,13 @@ jobs:
         with:
           gradle-version: '8.11.1'
 
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
       # Step 1: Build Debug APK (No keystore needed - ready to install on Android immediately)
       - name: Build Debug APK
         run: |
-          gradle assembleDebug --no-daemon --stacktrace
+          ./gradlew assembleDebug --no-daemon --stacktrace
 
       - name: Verify Debug APK Output
         run: |
@@ -65,7 +68,7 @@ jobs:
           if [ -f "app/keystore/release.jks" ]; then
             export SIGNING_KEYSTORE_PATH="keystore/release.jks"
           fi
-          gradle assembleRelease --no-daemon --stacktrace
+          ./gradlew assembleRelease --no-daemon --stacktrace
 
       - name: Verify Release APK Output
         run: |

@@ -333,10 +333,12 @@ fun DownloadScreen(
                                     isCancelled = false
                                     downloadProgress = 0f
 
+                                    val targetDownloadUrl = result.directStreamUrl ?: urlInput.trim()
+
                                     // Start Foreground Service for reliable background download
                                     val serviceIntent = Intent(context, DownloadForegroundService::class.java).apply {
                                         action = DownloadForegroundService.ACTION_START
-                                        putExtra(DownloadForegroundService.EXTRA_URL, urlInput.trim())
+                                        putExtra(DownloadForegroundService.EXTRA_URL, targetDownloadUrl)
                                         putExtra(DownloadForegroundService.EXTRA_TARGET_DIR, chosenFolderUri)
                                         putExtra(DownloadForegroundService.EXTRA_FILE_NAME, result.fileName)
                                         putExtra(DownloadForegroundService.EXTRA_MIME_TYPE, result.mimeType)
@@ -347,7 +349,7 @@ fun DownloadScreen(
                                     scope.launch {
                                         try {
                                             downloader.downloadToFile(
-                                                url = urlInput.trim(),
+                                                url = targetDownloadUrl,
                                                 targetDirUri = Uri.parse(chosenFolderUri),
                                                 fileName = result.fileName,
                                                 mimeType = result.mimeType,

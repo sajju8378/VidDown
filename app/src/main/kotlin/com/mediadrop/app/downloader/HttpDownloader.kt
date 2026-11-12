@@ -3,13 +3,15 @@ package com.mediadrop.app.downloader
 import android.content.Context
 import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
-import com.mediadrop.app.data.DownloadStatus
 import com.mediadrop.app.data.MediaType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.schabi.newpipe.extractor.NewPipe
+import org.schabi.newpipe.extractor.ServiceList
+import org.schabi.newpipe.extractor.stream.StreamInfo
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.URLDecoder
@@ -19,7 +21,9 @@ data class ProbeResult(
     val fileName: String,
     val mimeType: String,
     val mediaType: MediaType,
-    val contentLength: Long
+    val contentLength: Long,
+    val directStreamUrl: String? = null,
+    val isYouTube: Boolean = false
 )
 
 class HttpDownloader(private val context: Context) {
@@ -31,14 +35,61 @@ class HttpDownloader(private val context: Context) {
         .followSslRedirects(true)
         .build()
 
+    companion object {
+        private var isNewPipeInitialized = false
+    }
+
+    init {
+        synchronized(HttpDownloader::class.java) {
+            if (!isNewPipeInitialized) {
+                try {
+                    NewPipe.init(OkHttpDownloader(client))
+                    isNewPipeInitialized = true
+                } catch (_: Exception) {}
+            }
+        }
+    }
+
     suspend fun probeUrl(url: String): ProbeResult = withContext(Dispatchers.IO) {
+        val trimmed = url.trim()
+        val isYt = isYouTubeUrl(trimmed)
+
+        if (isYt) {
+            try {
+                val streamInfo = StreamInfo.getInfo(ServiceList.YouTube, trimmed)
+                val rawTitle = streamInfo.name ?: "youtube_video"
+                val cleanTitle = rawTitle.replace(Regex("[/\\\\?%*:|\"<>]"), "_").trim()
+                val fileName = if (cleanTitle.endsWith(".mp4", ignoreCase = true)) cleanTitle else "$cleanTitle.mp4"
+
+                // Extract best progressive MP4 stream (muxed video + audio)
+                val bestVideoStream = streamInfo.videoStreams
+                    .filter { it.format?.name.equals("MP4", ignoreCase = true) }
+                    .maxByOrNull { it.resolution ?: "" }
+                    ?: streamInfo.videoStreams.firstOrNull()
+
+                val streamUrl = bestVideoStream?.content ?: trimmed
+
+                return@withContext ProbeResult(
+                    fileName = fileName,
+                    mimeType = "video/mp4",
+                    mediaType = MediaType.VIDEO_MP4,
+                    contentLength = bestVideoStream?.fileSize ?: 25_000_000L,
+                    directStreamUrl = streamUrl,
+                    isYouTube = true
+                )
+            } catch (_: Exception) {
+                // If NewPipe extraction encounters bot challenge, fallback to direct derivation
+            }
+        }
+
+        // Standard direct media URL inspection
         val request = Request.Builder()
-            .url(url)
+            .url(trimmed)
             .head()
             .header("User-Agent", "Mozilla/5.0 (Android; Mobile; rv:130.0) Gecko/130.0 Firefox/130.0")
             .build()
 
-        var fileName = deriveFilename(url)
+        var fileName = deriveFilename(trimmed)
         var mimeType = "application/octet-stream"
         var contentLength = -1L
 
@@ -46,8 +97,7 @@ class HttpDownloader(private val context: Context) {
             client.newCall(request).execute().use { response ->
                 contentLength = response.header("Content-Length")?.toLongOrNull() ?: -1L
                 mimeType = response.header("Content-Type")?.split(";")?.firstOrNull()?.trim() ?: mimeType
-                
-                // Parse Content-Disposition filename if available
+
                 response.header("Content-Disposition")?.let { cd ->
                     val nameMatch = Regex("""filename\*?=['"]?(?:UTF-8'')?([^'";]+)['"]?""", RegexOption.IGNORE_CASE).find(cd)
                     nameMatch?.groupValues?.get(1)?.let { cdName ->
@@ -55,12 +105,17 @@ class HttpDownloader(private val context: Context) {
                     }
                 }
             }
-        } catch (_: Exception) {
-            // Fallback to URL path inspection
-        }
+        } catch (_: Exception) {}
 
         val mediaType = categorizeMediaType(mimeType, fileName)
-        ProbeResult(fileName, mimeType, mediaType, contentLength)
+        ProbeResult(
+            fileName = fileName,
+            mimeType = mimeType,
+            mediaType = mediaType,
+            contentLength = contentLength,
+            directStreamUrl = trimmed,
+            isYouTube = false
+        )
     }
 
     suspend fun downloadToFile(
@@ -100,7 +155,7 @@ class HttpDownloader(private val context: Context) {
             outputStream = context.contentResolver.openOutputStream(targetDoc.uri)
                 ?: throw IllegalStateException("Cannot open output stream for document")
 
-            val buffer = ByteArray(16 * 1024) // 16KB buffer
+            val buffer = ByteArray(32 * 1024) // 32KB buffer for fast downloading
             var bytesCopied = 0L
             var lastTime = System.currentTimeMillis()
             var bytesSinceLastCheck = 0L
@@ -115,7 +170,7 @@ class HttpDownloader(private val context: Context) {
 
                 val now = System.currentTimeMillis()
                 val delta = now - lastTime
-                if (delta >= 500) { // Update speed twice per second
+                if (delta >= 500) {
                     currentSpeed = (bytesSinceLastCheck * 1000) / delta
                     lastTime = now
                     bytesSinceLastCheck = 0L
@@ -141,12 +196,16 @@ class HttpDownloader(private val context: Context) {
         }
     }
 
+    private fun isYouTubeUrl(url: String): Boolean {
+        val lower = url.lowercase()
+        return lower.contains("youtube.com") || lower.contains("youtu.be")
+    }
+
     private fun deriveFilename(url: String): String {
         return try {
             val uri = Uri.parse(url)
             val host = uri.host?.lowercase() ?: ""
-            
-            // Handle YouTube URLs specifically
+
             if (host.contains("youtube.com") || host.contains("youtu.be")) {
                 val videoId = uri.getQueryParameter("v") ?: uri.lastPathSegment ?: "video"
                 return "youtube_video_$videoId.mp4"

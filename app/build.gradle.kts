@@ -50,6 +50,7 @@ android {
     }
 
     compileOptions {
+        isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
@@ -60,6 +61,15 @@ android {
 
     buildFeatures {
         compose = true
+    }
+
+    packaging {
+        resources {
+            excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            excludes += "META-INF/DEPENDENCIES"
+            excludes += "META-INF/LICENSE*"
+            excludes += "META-INF/NOTICE*"
+        }
     }
 }
 
@@ -88,6 +98,12 @@ dependencies {
     // Background downloading service & worker
     implementation(libs.androidx.work.runtime.ktx)
     implementation(libs.kotlinx.coroutines.android)
+
+    // Desugaring for NewPipeExtractor compatibility on Android (includes NIO)
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs_nio:2.0.4")
+
+    // NewPipeExtractor for native YouTube stream resolution on Android
+    implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.24.6")
 
     debugImplementation(libs.androidx.ui.tooling)
 }
