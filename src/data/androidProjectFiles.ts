@@ -61,8 +61,8 @@ jobs:
   {
     path: '.github/workflows/build-signed-apk.yml',
     category: 'ci',
-    description: 'GitHub Actions workflow to decode base64 keystore, build, and sign release APK',
-    content: `name: Build & Sign Release APK
+    description: 'GitHub Actions workflow to automatically build Debug APK and signed Release APK',
+    content: `name: Build Android APK (Debug & Release)
 
 on:
   push:
@@ -73,7 +73,7 @@ on:
 
 jobs:
   build-apk:
-    name: Build Signed Android APK
+    name: Build Android APK (Debug & Release)
     runs-on: ubuntu-latest
 
     steps:
@@ -91,24 +91,41 @@ jobs:
         with:
           gradle-version: '8.11.1'
 
-      - name: Decode Keystore from Secrets
-        if: "\${{ env.KEYSTORE_BASE64 != '' }}"
+      # Step 1: Build Debug APK (No keystore needed - ready to install on Android immediately)
+      - name: Build Debug APK
+        run: |
+          gradle assembleDebug --no-daemon --stacktrace
+
+      - name: Verify Debug APK Output
+        run: |
+          ls -la app/build/outputs/apk/debug/ || true
+
+      - name: Upload Debug APK Artifact (Installable on any Android phone)
+        uses: actions/upload-artifact@v4
+        with:
+          name: MediaDrop-Debug-APK
+          path: app/build/outputs/apk/debug/*.apk
+          retention-days: 30
+
+      # Step 2: Build Signed Release APK
+      - name: Decode Keystore from Secrets (Optional)
+        if: "\${{ secrets.RELEASE_KEYSTORE_BASE64 != '' }}"
         env:
           KEYSTORE_BASE64: \${{ secrets.RELEASE_KEYSTORE_BASE64 }}
         run: |
           mkdir -p app/keystore
           echo "$KEYSTORE_BASE64" | base64 --decode > app/keystore/release.jks
 
-      - name: Build Release APK with Gradle
+      - name: Build Release APK
         env:
           SIGNING_KEYSTORE_PATH: \${{ secrets.RELEASE_KEYSTORE_BASE64 != '' && 'keystore/release.jks' || '' }}
           KEYSTORE_PASSWORD: \${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: \${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: \${{ secrets.KEY_PASSWORD }}
         run: |
-          gradle assembleRelease --stacktrace
+          gradle assembleRelease --no-daemon --stacktrace
 
-      - name: Check Built APK Output
+      - name: Verify Release APK Output
         run: |
           ls -la app/build/outputs/apk/release/ || true
 
@@ -123,7 +140,9 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: app/build/outputs/apk/release/*.apk
+          files: |
+            app/build/outputs/apk/debug/*.apk
+            app/build/outputs/apk/release/*.apk
           generate_release_notes: true
         env:
           GITHUB_TOKEN: \${{ secrets.GITHUB_TOKEN }}
@@ -200,6 +219,101 @@ jobs:
     </application>
 
 </manifest>
+`,
+  },
+  {
+    path: 'app/src/main/res/values/strings.xml',
+    category: 'xml',
+    description: 'Android application strings resource',
+    content: `<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">MediaDrop</string>
+</resources>
+`,
+  },
+  {
+    path: 'app/src/main/res/values/themes.xml',
+    category: 'xml',
+    description: 'Android application themes resource',
+    content: `<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.MediaDrop" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+</resources>
+`,
+  },
+  {
+    path: 'app/src/main/res/values/colors.xml',
+    category: 'xml',
+    description: 'Android application color palette',
+    content: `<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="primary">#6366F1</color>
+    <color name="primary_dark">#4F46E5</color>
+    <color name="secondary">#14B8A6</color>
+    <color name="background">#0F172A</color>
+    <color name="surface">#1E293B</color>
+</resources>
+`,
+  },
+  {
+    path: 'app/src/main/res/mipmap/ic_launcher.xml',
+    category: 'xml',
+    description: 'Base Android launcher icon for AAPT2 fallback',
+    content: `<?xml version="1.0" encoding="utf-8"?>
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@drawable/ic_launcher_background"/>
+    <foreground android:drawable="@drawable/ic_launcher_foreground"/>
+</adaptive-icon>
+`,
+  },
+  {
+    path: 'app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml',
+    category: 'xml',
+    description: 'Android adaptive launcher icon',
+    content: `<?xml version="1.0" encoding="utf-8"?>
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@drawable/ic_launcher_background"/>
+    <foreground android:drawable="@drawable/ic_launcher_foreground"/>
+</adaptive-icon>
+`,
+  },
+  {
+    path: 'app/src/main/res/drawable/ic_launcher_background.xml',
+    category: 'xml',
+    description: 'Android launcher icon background vector drawable',
+    content: `<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#4F46E5"
+        android:pathData="M0,0h108v108h-108z"/>
+</vector>
+`,
+  },
+  {
+    path: 'app/src/main/res/drawable/ic_launcher_foreground.xml',
+    category: 'xml',
+    description: 'Android launcher icon foreground vector drawable',
+    content: `<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M54,28 L54,64 M40,50 L54,64 L68,50 M32,76 L76,76"
+        android:strokeWidth="6"
+        android:strokeColor="#FFFFFF"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"/>
+</vector>
 `,
   },
   {
@@ -494,14 +608,23 @@ class HttpDownloader(private val context: Context) {
     private fun deriveFilename(url: String): String {
         return try {
             val uri = Uri.parse(url)
+            val host = uri.host?.lowercase() ?: ""
+            
+            if (host.contains("youtube.com") || host.contains("youtu.be")) {
+                val videoId = uri.getQueryParameter("v") ?: uri.lastPathSegment ?: "video"
+                return "youtube_video_\$videoId.mp4"
+            }
+
             val lastPath = uri.lastPathSegment
             if (!lastPath.isNullOrBlank() && lastPath.contains(".")) {
                 URLDecoder.decode(lastPath, "UTF-8")
+            } else if (!lastPath.isNullOrBlank() && lastPath != "watch") {
+                URLDecoder.decode(lastPath, "UTF-8") + ".mp4"
             } else {
-                "media_\${System.currentTimeMillis()}"
+                "media_\${System.currentTimeMillis()}.mp4"
             }
         } catch (_: Exception) {
-            "media_\${System.currentTimeMillis()}"
+            "media_\${System.currentTimeMillis()}.mp4"
         }
     }
 
@@ -772,7 +895,12 @@ class DownloadForegroundService : Service() {
                     } catch (e: Exception) {
                         // Error handling
                     } finally {
-                        stopForeground(STOP_FOREGROUND_DETACH)
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                            stopForeground(Service.STOP_FOREGROUND_DETACH)
+                        } else {
+                            @Suppress("DEPRECATION")
+                            stopForeground(false)
+                        }
                         stopSelf()
                     }
                 }
@@ -780,7 +908,12 @@ class DownloadForegroundService : Service() {
             ACTION_CANCEL -> {
                 isCancelled = true
                 downloadJob?.cancel()
-                stopForeground(STOP_FOREGROUND_REMOVE)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    stopForeground(Service.STOP_FOREGROUND_REMOVE)
+                } else {
+                    @Suppress("DEPRECATION")
+                    stopForeground(true)
+                }
                 stopSelf()
             }
         }
@@ -854,43 +987,28 @@ android {
     }
 
     signingConfigs {
-        create("release") {
-            val keystorePath = System.getenv("SIGNING_KEYSTORE_PATH")
-            if (!keystorePath.isNullOrEmpty() && File(keystorePath).exists()) {
+        val keystorePath = System.getenv("SIGNING_KEYSTORE_PATH")
+        if (!keystorePath.isNullOrEmpty() && File(keystorePath).exists()) {
+            create("release") {
                 storeFile = File(keystorePath)
                 storePassword = System.getenv("KEYSTORE_PASSWORD") ?: ""
                 keyAlias = System.getenv("KEY_ALIAS") ?: ""
                 keyPassword = System.getenv("KEY_PASSWORD") ?: ""
-            } else {
-                val debugKeystore = file("\${System.getProperty("user.home")}/.android/debug.keystore")
-                if (debugKeystore.exists()) {
-                    storeFile = debugKeystore
-                    storePassword = "android"
-                    keyAlias = "androiddebugkey"
-                    keyPassword = "android"
-                }
             }
         }
     }
 
     buildTypes {
         release {
-            isMinifyEnabled = true
-            isShrinkResources = true
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
-            val releaseSigning = signingConfigs.getByName("release")
-            signingConfig = if (releaseSigning.storeFile != null && releaseSigning.storeFile!!.exists()) {
-                releaseSigning
-            } else {
-                signingConfigs.getByName("debug")
-            }
+            isMinifyEnabled = false
+            isShrinkResources = false
+            val releaseConfig = signingConfigs.findByName("release")
+            signingConfig = releaseConfig ?: signingConfigs.getByName("debug")
         }
         debug {
             applicationIdSuffix = ".debug"
             isDebuggable = true
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 

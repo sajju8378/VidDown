@@ -144,14 +144,24 @@ class HttpDownloader(private val context: Context) {
     private fun deriveFilename(url: String): String {
         return try {
             val uri = Uri.parse(url)
+            val host = uri.host?.lowercase() ?: ""
+            
+            // Handle YouTube URLs specifically
+            if (host.contains("youtube.com") || host.contains("youtu.be")) {
+                val videoId = uri.getQueryParameter("v") ?: uri.lastPathSegment ?: "video"
+                return "youtube_video_$videoId.mp4"
+            }
+
             val lastPath = uri.lastPathSegment
             if (!lastPath.isNullOrBlank() && lastPath.contains(".")) {
                 URLDecoder.decode(lastPath, "UTF-8")
+            } else if (!lastPath.isNullOrBlank() && lastPath != "watch") {
+                URLDecoder.decode(lastPath, "UTF-8") + ".mp4"
             } else {
-                "media_${System.currentTimeMillis()}"
+                "media_${System.currentTimeMillis()}.mp4"
             }
         } catch (_: Exception) {
-            "media_${System.currentTimeMillis()}"
+            "media_${System.currentTimeMillis()}.mp4"
         }
     }
 

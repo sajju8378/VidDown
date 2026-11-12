@@ -80,7 +80,12 @@ class DownloadForegroundService : Service() {
                     } catch (e: Exception) {
                         showFailedNotification(fileName, e.message ?: "Download failed")
                     } finally {
-                        stopForeground(STOP_FOREGROUND_DETACH)
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                            stopForeground(Service.STOP_FOREGROUND_DETACH)
+                        } else {
+                            @Suppress("DEPRECATION")
+                            stopForeground(false)
+                        }
                         stopSelf()
                     }
                 }
@@ -88,7 +93,12 @@ class DownloadForegroundService : Service() {
             ACTION_CANCEL -> {
                 isCancelled = true
                 downloadJob?.cancel()
-                stopForeground(STOP_FOREGROUND_REMOVE)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    stopForeground(Service.STOP_FOREGROUND_REMOVE)
+                } else {
+                    @Suppress("DEPRECATION")
+                    stopForeground(true)
+                }
                 stopSelf()
             }
         }

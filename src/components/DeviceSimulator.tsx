@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { SimulatedDownloadItem, MediaType } from '../types';
 import { SAMPLE_MEDIA_LINKS } from '../data/sampleLinks';
+import { resolveMediaUrl, downloadRealFileToDevice, extractYouTubeId } from '../utils/mediaResolver';
 
 interface DeviceSimulatorProps {
   onOpenShareIntent: () => void;
@@ -124,72 +125,51 @@ export const DeviceSimulator: React.FC<DeviceSimulatorProps> = ({
   }, [sharedUrlPayload]);
 
   // Inspect link metadata
-  const handleInspectLink = (targetUrl: string, autoStart: boolean = false) => {
+  const handleInspectLink = async (targetUrl: string, autoStart: boolean = false) => {
     if (!targetUrl.trim()) return;
     setIsProbing(true);
 
     const cleanUrl = targetUrl.trim();
-    // Derive filename & media type
-    let fileName = 'downloaded_media';
-    let mediaType: MediaType = 'generic';
-    let mimeType = 'application/octet-stream';
-    let totalBytes = 15_000_000;
-    let sizeFormatted = '~15.0 MB';
-
-    const matchSample = SAMPLE_MEDIA_LINKS.find((s) => cleanUrl.includes(s.url.split('/').pop() || ''));
-    if (matchSample) {
-      fileName = matchSample.title.replace(/ \([^)]*\)/, '');
-      mediaType = matchSample.type;
-      mimeType = matchSample.mimeType;
-      totalBytes = matchSample.approxBytes;
-      sizeFormatted = matchSample.size;
-    } else {
-      try {
-        const parsed = new URL(cleanUrl);
-        const pathParts = parsed.pathname.split('/').filter(Boolean);
-        if (pathParts.length > 0) {
-          fileName = decodeURIComponent(pathParts[pathParts.length - 1]);
-        }
-      } catch {
-        fileName = 'media_' + Date.now();
-      }
-
-      const lowerName = fileName.toLowerCase();
-      if (lowerName.endsWith('.mp4') || lowerName.endsWith('.mkv') || lowerName.endsWith('.webm')) {
-        mediaType = 'video';
-        mimeType = 'video/mp4';
-        totalBytes = 24_000_000;
-        sizeFormatted = '24.0 MB';
-      } else if (lowerName.endsWith('.mp3') || lowerName.endsWith('.m4a') || lowerName.endsWith('.wav')) {
-        mediaType = 'audio';
-        mimeType = 'audio/mpeg';
-        totalBytes = 6_500_000;
-        sizeFormatted = '6.5 MB';
-      } else if (lowerName.endsWith('.jpg') || lowerName.endsWith('.jpeg') || lowerName.endsWith('.png') || lowerName.endsWith('.webp')) {
-        mediaType = 'image';
-        mimeType = 'image/jpeg';
-        totalBytes = 3_200_000;
-        sizeFormatted = '3.2 MB';
-      }
-    }
-
-    setTimeout(() => {
+    try {
+      const resolved = await resolveMediaUrl(cleanUrl);
       setProbedData({
-        fileName,
-        mimeType,
-        mediaType,
-        sizeFormatted,
-        totalBytes,
+        fileName: resolved.fileName,
+        mimeType: resolved.mimeType,
+        mediaType: resolved.mediaType,
+        sizeFormatted: resolved.approxSize,
+        totalBytes: resolved.totalBytes,
       });
-      setIsProbing(false);
 
       if (autoStart) {
-        startDownloadWithMeta(cleanUrl, fileName, mediaType, mimeType, totalBytes);
+        startDownloadWithMeta(
+          cleanUrl,
+          resolved.fileName,
+          resolved.mediaType,
+          resolved.mimeType,
+          resolved.totalBytes
+        );
       }
-    }, 400);
+    } catch (e) {
+      console.warn('Failed to resolve URL:', e);
+      // Fallback
+      setProbedData({
+        fileName: 'media_download.mp4',
+        mimeType: 'video/mp4',
+        mediaType: 'video',
+        sizeFormatted: '~15.0 MB',
+        totalBytes: 15_000_000,
+      });
+    } finally {
+      setIsProbing(false);
+    }
   };
 
-  // Start real or simulated chunked download
+  // Trigger actual file download to user's computer/phone
+  const triggerActualDownload = (url: string, fileName: string) => {
+    downloadRealFileToDevice(url, fileName);
+  };
+
+  // Start real or chunked download
   const startDownloadWithMeta = (
     url: string,
     fileName: string,
@@ -206,16 +186,19 @@ export const DeviceSimulator: React.FC<DeviceSimulatorProps> = ({
       totalBytes,
       downloadedBytes: 0,
       progress: 0,
-      speedBytesPerSec: 4_500_000, // ~4.5 MB/s
+      speedBytesPerSec: 4_500_000,
       status: 'downloading',
       destinationFolder: chosenFolder,
       timestamp: Date.now(),
     };
 
     setActiveDownload(newItem);
+
+    // Also trigger actual file download to the user's real browser/device downloads!
+    triggerActualDownload(url, fileName);
   };
 
-  // Timer loop for active download progress simulation
+  // Timer loop for active download progress simulation & completion
   useEffect(() => {
     if (!activeDownload || activeDownload.status !== 'downloading') return;
 
@@ -223,7 +206,6 @@ export const DeviceSimulator: React.FC<DeviceSimulatorProps> = ({
       setActiveDownload((prev) => {
         if (!prev || prev.status !== 'downloading') return prev;
 
-        // Increase by random chunk between 600KB and 1.8MB
         const speed = Math.floor(Math.random() * 1_200_000) + 3_800_000;
         const chunk = Math.floor(speed * 0.25);
         const nextBytes = Math.min(prev.downloadedBytes + chunk, prev.totalBytes);
@@ -249,7 +231,7 @@ export const DeviceSimulator: React.FC<DeviceSimulatorProps> = ({
           speedBytesPerSec: speed,
         };
       });
-    }, 250);
+    }, 200);
 
     return () => clearInterval(interval);
   }, [activeDownload?.status]);
@@ -568,23 +550,68 @@ export const DeviceSimulator: React.FC<DeviceSimulatorProps> = ({
                       </div>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() =>
-                        startDownloadWithMeta(
-                          urlInput.trim(),
-                          probedData.fileName,
-                          probedData.mediaType,
-                          probedData.mimeType,
-                          probedData.totalBytes
-                        )
-                      }
-                      disabled={activeDownload?.status === 'downloading'}
-                      className="w-full py-2.5 bg-teal-600 hover:bg-teal-500 disabled:opacity-50 text-white text-xs font-bold rounded-xl shadow-lg shadow-teal-900/20 flex items-center justify-center gap-2 transition-all active:scale-[0.98]"
-                    >
-                      <Download className="w-4 h-4" />
-                      <span>Download to Chosen Folder</span>
-                    </button>
+                    {extractYouTubeId(urlInput.trim()) ? (
+                      <div className="space-y-2 pt-1">
+                        <div className="flex items-center gap-1.5 text-[10px] text-amber-300 bg-amber-500/10 border border-amber-500/20 px-2 py-1 rounded-md">
+                          <span>YouTube stream detected. Choose download format:</span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              startDownloadWithMeta(
+                                urlInput.trim(),
+                                probedData.fileName.replace(/\.[^/.]+$/, '') + '.mp4',
+                                'video',
+                                'video/mp4',
+                                probedData.totalBytes
+                              )
+                            }
+                            disabled={activeDownload?.status === 'downloading'}
+                            className="py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 shadow-sm active:scale-95 transition-all"
+                          >
+                            <Film className="w-3.5 h-3.5" />
+                            <span>Download MP4</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() =>
+                              startDownloadWithMeta(
+                                urlInput.trim(),
+                                probedData.fileName.replace(/\.[^/.]+$/, '') + '.mp3',
+                                'audio',
+                                'audio/mpeg',
+                                6_500_000
+                              )
+                            }
+                            disabled={activeDownload?.status === 'downloading'}
+                            className="py-2 bg-teal-600 hover:bg-teal-500 text-white text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 shadow-sm active:scale-95 transition-all"
+                          >
+                            <Volume2 className="w-3.5 h-3.5" />
+                            <span>Download MP3</span>
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          startDownloadWithMeta(
+                            urlInput.trim(),
+                            probedData.fileName,
+                            probedData.mediaType,
+                            probedData.mimeType,
+                            probedData.totalBytes
+                          )
+                        }
+                        disabled={activeDownload?.status === 'downloading'}
+                        className="w-full py-2.5 bg-teal-600 hover:bg-teal-500 disabled:opacity-50 text-white text-xs font-bold rounded-xl shadow-lg shadow-teal-900/20 flex items-center justify-center gap-2 transition-all active:scale-[0.98]"
+                      >
+                        <Download className="w-4 h-4" />
+                        <span>Download to Chosen Folder & Save</span>
+                      </button>
+                    )}
                   </div>
                 )}
 
@@ -625,16 +652,34 @@ export const DeviceSimulator: React.FC<DeviceSimulatorProps> = ({
                       </span>
                     </div>
 
-                    <div className="flex items-center justify-between pt-1">
+                    <div className="flex flex-col gap-2 pt-1">
                       {activeDownload.status === 'completed' ? (
-                        <button
-                          type="button"
-                          onClick={() => onOpenPlayer(activeDownload)}
-                          className="w-full py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg flex items-center justify-center gap-1.5"
-                        >
-                          <Play className="w-3.5 h-3.5" />
-                          <span>Open & Play Media</span>
-                        </button>
+                        <>
+                          <div className="flex items-center gap-1.5 text-[11px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1.5 rounded-lg">
+                            <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                            <span>File ready! Saved to {chosenFolder}</span>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-2">
+                            <button
+                              type="button"
+                              onClick={() => triggerActualDownload(activeDownload.originalUrl, activeDownload.fileName)}
+                              className="py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-lg flex items-center justify-center gap-1.5 shadow-sm active:scale-95 transition-all"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                              <span>Save to PC/Phone</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => onOpenPlayer(activeDownload)}
+                              className="py-2 bg-slate-800 hover:bg-slate-700 text-slate-100 text-xs font-semibold rounded-lg flex items-center justify-center gap-1.5 border border-slate-700 active:scale-95 transition-all"
+                            >
+                              <Play className="w-3.5 h-3.5 text-emerald-400" />
+                              <span>Play Media</span>
+                            </button>
+                          </div>
+                        </>
                       ) : (
                         <div className="flex items-center gap-2 w-full">
                           <button

@@ -24,44 +24,28 @@ android {
     }
 
     signingConfigs {
-        create("release") {
-            val keystorePath = System.getenv("SIGNING_KEYSTORE_PATH")
-            if (!keystorePath.isNullOrEmpty() && File(keystorePath).exists()) {
+        val keystorePath = System.getenv("SIGNING_KEYSTORE_PATH")
+        if (!keystorePath.isNullOrEmpty() && File(keystorePath).exists()) {
+            create("release") {
                 storeFile = File(keystorePath)
                 storePassword = System.getenv("KEYSTORE_PASSWORD") ?: ""
                 keyAlias = System.getenv("KEY_ALIAS") ?: ""
                 keyPassword = System.getenv("KEY_PASSWORD") ?: ""
-            } else {
-                // Fallback to debug keystore for automated builds when secrets are not yet configured
-                val debugKeystore = file("${System.getProperty("user.home")}/.android/debug.keystore")
-                if (debugKeystore.exists()) {
-                    storeFile = debugKeystore
-                    storePassword = "android"
-                    keyAlias = "androiddebugkey"
-                    keyPassword = "android"
-                }
             }
         }
     }
 
     buildTypes {
         release {
-            isMinifyEnabled = true
-            isShrinkResources = true
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
-            val releaseSigning = signingConfigs.getByName("release")
-            signingConfig = if (releaseSigning.storeFile != null && releaseSigning.storeFile!!.exists()) {
-                releaseSigning
-            } else {
-                signingConfigs.getByName("debug")
-            }
+            isMinifyEnabled = false
+            isShrinkResources = false
+            val releaseConfig = signingConfigs.findByName("release")
+            signingConfig = releaseConfig ?: signingConfigs.getByName("debug")
         }
         debug {
             applicationIdSuffix = ".debug"
             isDebuggable = true
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 

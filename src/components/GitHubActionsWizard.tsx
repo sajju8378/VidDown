@@ -51,10 +51,63 @@ export const GitHubActionsWizard: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2">
-          <span className="text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 rounded-lg flex items-center gap-1.5 font-medium">
-            <ShieldCheck className="w-4 h-4" />
-            <span>Workflows Ready</span>
+          <a
+            href="https://github.com/sajju8378/VidDown/actions"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-xl flex items-center gap-2 shadow-sm transition-all"
+          >
+            <Download className="w-3.5 h-3.5" />
+            <span>Go to APK Artifacts (GitHub)</span>
+          </a>
+        </div>
+      </div>
+
+      {/* Direct APK Download Card */}
+      <div className="p-6 bg-slate-900 border border-slate-800 rounded-2xl space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 text-indigo-400 font-bold text-xs uppercase tracking-wider">
+            <Download className="w-4 h-4" />
+            <span>Download & Install APK on Android</span>
+          </div>
+          <span className="text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded font-mono">
+            Debug & Release Supported
           </span>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="p-4 bg-slate-950/80 border border-slate-800 rounded-xl space-y-2">
+            <div className="flex items-center justify-between">
+              <h4 className="text-sm font-bold text-slate-100">1. Debug APK (Instant Install)</h4>
+              <span className="text-[10px] text-teal-400 bg-teal-500/10 px-2 py-0.5 rounded">No Keys Needed</span>
+            </div>
+            <p className="text-xs text-slate-400 leading-relaxed">
+              Every push to your GitHub repo now builds <code className="text-indigo-300 font-mono">app-debug.apk</code> automatically. You can install it on any Android phone immediately without needing any signing keys or passwords.
+            </p>
+            <div className="pt-2">
+              <a
+                href="https://github.com/sajju8378/VidDown/actions"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-xs text-indigo-400 hover:text-indigo-300 font-semibold"
+              >
+                <span>Download MediaDrop-Debug-APK from Actions</span>
+                <ExternalLink className="w-3.5 h-3.5" />
+              </a>
+            </div>
+          </div>
+
+          <div className="p-4 bg-slate-950/80 border border-slate-800 rounded-xl space-y-2">
+            <div className="flex items-center justify-between">
+              <h4 className="text-sm font-bold text-slate-100">2. How to Install on Phone</h4>
+              <span className="text-[10px] text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded">3 Steps</span>
+            </div>
+            <ol className="text-xs text-slate-400 space-y-1 list-decimal list-inside leading-relaxed">
+              <li>Download the APK file onto your Android phone or PC.</li>
+              <li>Tap the downloaded <code className="text-slate-300">app-debug.apk</code> in your phone's File Manager.</li>
+              <li>When prompted, toggle <strong className="text-white">Allow from this source</strong> and tap <strong className="text-white">Install</strong>.</li>
+            </ol>
+          </div>
         </div>
       </div>
 
