@@ -53,8 +53,41 @@ export const GitHubActionsWizard: React.FC = () => {
         <div className="flex items-center gap-2">
           <span className="text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 rounded-lg flex items-center gap-1.5 font-medium">
             <ShieldCheck className="w-4 h-4" />
-            <span>Workflow Ready</span>
+            <span>Workflows Ready</span>
           </span>
+        </div>
+      </div>
+
+      {/* GitHub Pages 404 Resolution Guide */}
+      <div className="p-5 bg-indigo-950/40 border border-indigo-500/30 rounded-2xl space-y-3">
+        <div className="flex items-center gap-2.5 text-indigo-300 font-bold text-sm">
+          <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+          <span>Deploying to GitHub Pages? Fix "404 main.tsx" in 1 Step</span>
+        </div>
+        <p className="text-xs text-slate-300 leading-relaxed">
+          Browsers cannot execute raw <code className="text-indigo-300 font-mono">.tsx</code> source code directly. When GitHub Pages serves from branch root (<code className="text-indigo-300 font-mono">/</code>), it tries to fetch <code className="text-indigo-300 font-mono">main.tsx</code> and returns 404. Choose either fix below:
+        </p>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+          <div className="p-3 bg-slate-900/90 border border-slate-800 rounded-xl space-y-1.5">
+            <div className="flex items-center gap-2 text-xs font-semibold text-emerald-400">
+              <Check className="w-3.5 h-3.5" />
+              <span>Option A (Recommended): GitHub Actions</span>
+            </div>
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              In your GitHub repo, go to <span className="text-slate-200 font-medium">Settings &gt; Pages &gt; Build and deployment</span>. Change <strong className="text-white">Source</strong> to <span className="text-indigo-300 font-mono">GitHub Actions</span>. The included <code className="text-slate-300 font-mono">deploy-pages.yml</code> will automatically build and publish!
+            </p>
+          </div>
+
+          <div className="p-3 bg-slate-900/90 border border-slate-800 rounded-xl space-y-1.5">
+            <div className="flex items-center gap-2 text-xs font-semibold text-teal-400">
+              <Check className="w-3.5 h-3.5" />
+              <span>Option B: Deploy from /docs branch folder</span>
+            </div>
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              In <span className="text-slate-200 font-medium">Settings &gt; Pages &gt; Branch</span>, select your branch and change the folder dropdown from <code className="text-slate-300 font-mono">/ (root)</code> to <strong className="text-white">/docs</strong>. The compiled build in <code className="text-slate-300 font-mono">docs/</code> will load instantly.
+            </p>
+          </div>
         </div>
       </div>
 
