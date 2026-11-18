@@ -357,7 +357,51 @@ fun MainAppScreen(
         }
     }
 }
-`},{path:`app/src/main/kotlin/com/mediadrop/app/downloader/HttpDownloader.kt`,category:`kotlin`,description:`OkHttp chunked streaming engine with byte progress and SAF DocumentFile output`,content:`package com.mediadrop.app.downloader
+`},{path:`app/src/main/kotlin/com/mediadrop/app/downloader/OkHttpDownloader.kt`,category:`kotlin`,description:`OkHttp bridge for NewPipeExtractor to perform network requests on Android`,content:`package com.mediadrop.app.downloader
+
+import okhttp3.OkHttpClient
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.schabi.newpipe.extractor.downloader.Downloader
+import org.schabi.newpipe.extractor.downloader.Request
+import org.schabi.newpipe.extractor.downloader.Response
+import java.util.concurrent.ConcurrentHashMap
+
+class OkHttpDownloader(private val client: OkHttpClient) : Downloader() {
+
+    override fun execute(request: Request): Response {
+        val httpMethod = request.httpMethod()
+        val url = request.url()
+        val headers = request.headers()
+        val dataToSend = request.dataToSend()
+
+        val body = when {
+            httpMethod.equals("GET", ignoreCase = true) || httpMethod.equals("HEAD", ignoreCase = true) -> null
+            dataToSend != null -> dataToSend.toRequestBody()
+            httpMethod.equals("POST", ignoreCase = true) || httpMethod.equals("PUT", ignoreCase = true) -> ByteArray(0).toRequestBody()
+            else -> null
+        }
+        val builder = okhttp3.Request.Builder().url(url)
+
+        headers?.forEach { (key, values) ->
+            values?.forEach { value ->
+                builder.addHeader(key, value)
+            }
+        }
+
+        builder.method(httpMethod, body)
+
+        return client.newCall(builder.build()).execute().use { res ->
+            val responseBody = res.body?.string() ?: ""
+            val responseHeaders = ConcurrentHashMap<String, List<String>>()
+            res.headers.toMultimap().forEach { (k, v) ->
+                responseHeaders[k] = v
+            }
+
+            Response(res.code, res.message, responseHeaders, responseBody, res.request.url.toString())
+        }
+    }
+}
+`},{path:`app/src/main/kotlin/com/mediadrop/app/downloader/HttpDownloader.kt`,category:`kotlin`,description:`NewPipeExtractor YouTube stream resolution & OkHttp chunked SAF downloader`,content:`package com.mediadrop.app.downloader
 
 import android.content.Context
 import android.net.Uri
@@ -368,6 +412,9 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.schabi.newpipe.extractor.NewPipe
+import org.schabi.newpipe.extractor.ServiceList
+import org.schabi.newpipe.extractor.stream.StreamInfo
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.URLDecoder
@@ -377,7 +424,9 @@ data class ProbeResult(
     val fileName: String,
     val mimeType: String,
     val mediaType: MediaType,
-    val contentLength: Long
+    val contentLength: Long,
+    val directStreamUrl: String? = null,
+    val isYouTube: Boolean = false
 )
 
 class HttpDownloader(private val context: Context) {
@@ -389,14 +438,86 @@ class HttpDownloader(private val context: Context) {
         .followSslRedirects(true)
         .build()
 
+    companion object {
+        private var isNewPipeInitialized = false
+    }
+
+    init {
+        synchronized(HttpDownloader::class.java) {
+            if (!isNewPipeInitialized) {
+                try {
+                    NewPipe.init(OkHttpDownloader(client))
+                    isNewPipeInitialized = true
+                } catch (_: Exception) {}
+            }
+        }
+    }
+
     suspend fun probeUrl(url: String): ProbeResult = withContext(Dispatchers.IO) {
+        val trimmed = url.trim()
+        val isYt = isYouTubeUrl(trimmed)
+
+        if (isYt) {
+            try {
+                val streamInfo = StreamInfo.getInfo(ServiceList.YouTube, trimmed)
+                val rawTitle = streamInfo.name ?: "youtube_video"
+                val cleanTitle = rawTitle.replace(Regex("[/\\\\?%*:|"<>]"), "_").trim()
+                    .ifBlank { "youtube_video" }
+
+                // Extract best progressive MP4 stream (muxed video + audio)
+                val usableVideoStreams = streamInfo.videoStreams.filter {
+                    it.isUrl && !it.content.isNullOrBlank()
+                }
+                val bestVideoStream = usableVideoStreams
+                    .filter { it.format?.name.equals("MP4", ignoreCase = true) }
+                    .maxByOrNull { it.height }
+                    ?: usableVideoStreams.maxByOrNull { it.height }
+
+                if (bestVideoStream != null) {
+                    val fileName = if (cleanTitle.endsWith(".mp4", ignoreCase = true)) cleanTitle else "\${cleanTitle}.mp4"
+                    val contentLength = bestVideoStream.itagItem?.contentLength?.takeIf { it > 0L } ?: -1L
+                    return@withContext ProbeResult(
+                        fileName = fileName,
+                        mimeType = "video/mp4",
+                        mediaType = MediaType.VIDEO_MP4,
+                        contentLength = contentLength,
+                        directStreamUrl = bestVideoStream.content,
+                        isYouTube = true
+                    )
+                }
+
+                // Fallback to best direct audio stream if no progressive muxed video stream is available
+                val bestAudioStream = streamInfo.audioStreams
+                    .filter { it.isUrl && !it.content.isNullOrBlank() }
+                    .maxByOrNull { it.averageBitrate }
+
+                if (bestAudioStream != null) {
+                    val fileName = if (cleanTitle.endsWith(".m4a", ignoreCase = true)) cleanTitle else "\${cleanTitle}.m4a"
+                    val contentLength = bestAudioStream.itagItem?.contentLength?.takeIf { it > 0L } ?: -1L
+                    return@withContext ProbeResult(
+                        fileName = fileName,
+                        mimeType = "audio/mp4",
+                        mediaType = MediaType.AUDIO_MP3,
+                        contentLength = contentLength,
+                        directStreamUrl = bestAudioStream.content,
+                        isYouTube = true
+                    )
+                }
+
+                throw IllegalStateException("No downloadable progressive streams found for this video")
+            } catch (e: Exception) {
+                throw IllegalStateException("YouTube extraction failed: \${e.message ?: "Unknown error"}", e)
+            }
+        }
+
+        // Standard direct media URL inspection
         val request = Request.Builder()
-            .url(url)
+            .url(trimmed)
             .head()
             .header("User-Agent", "Mozilla/5.0 (Android; Mobile; rv:130.0) Gecko/130.0 Firefox/130.0")
             .build()
 
-        var fileName = deriveFilename(url)
+        var fileName = deriveFilename(trimmed)
         var mimeType = "application/octet-stream"
         var contentLength = -1L
 
@@ -404,7 +525,7 @@ class HttpDownloader(private val context: Context) {
             client.newCall(request).execute().use { response ->
                 contentLength = response.header("Content-Length")?.toLongOrNull() ?: -1L
                 mimeType = response.header("Content-Type")?.split(";")?.firstOrNull()?.trim() ?: mimeType
-                
+
                 response.header("Content-Disposition")?.let { cd ->
                     val nameMatch = Regex("""filename\\*?=['"]?(?:UTF-8'')?([^'";]+)['"]?""", RegexOption.IGNORE_CASE).find(cd)
                     nameMatch?.groupValues?.get(1)?.let { cdName ->
@@ -415,7 +536,14 @@ class HttpDownloader(private val context: Context) {
         } catch (_: Exception) {}
 
         val mediaType = categorizeMediaType(mimeType, fileName)
-        ProbeResult(fileName, mimeType, mediaType, contentLength)
+        ProbeResult(
+            fileName = fileName,
+            mimeType = mimeType,
+            mediaType = mediaType,
+            contentLength = contentLength,
+            directStreamUrl = trimmed,
+            isYouTube = false
+        )
     }
 
     suspend fun downloadToFile(
@@ -429,6 +557,7 @@ class HttpDownloader(private val context: Context) {
         val dir = DocumentFile.fromTreeUri(context, targetDirUri)
             ?: throw IllegalStateException("Cannot access destination directory")
 
+        // Create target file inside user's selected SAF folder
         val targetDoc = dir.createFile(mimeType, fileName)
             ?: throw IllegalStateException("Failed to create file in selected folder")
 
@@ -454,7 +583,7 @@ class HttpDownloader(private val context: Context) {
             outputStream = context.contentResolver.openOutputStream(targetDoc.uri)
                 ?: throw IllegalStateException("Cannot open output stream for document")
 
-            val buffer = ByteArray(16 * 1024)
+            val buffer = ByteArray(32 * 1024) // 32KB buffer for fast downloading
             var bytesCopied = 0L
             var lastTime = System.currentTimeMillis()
             var bytesSinceLastCheck = 0L
@@ -495,14 +624,19 @@ class HttpDownloader(private val context: Context) {
         }
     }
 
+    private fun isYouTubeUrl(url: String): Boolean {
+        val lower = url.lowercase()
+        return lower.contains("youtube.com") || lower.contains("youtu.be")
+    }
+
     private fun deriveFilename(url: String): String {
         return try {
             val uri = Uri.parse(url)
             val host = uri.host?.lowercase() ?: ""
-            
+
             if (host.contains("youtube.com") || host.contains("youtu.be")) {
                 val videoId = uri.getQueryParameter("v") ?: uri.lastPathSegment ?: "video"
-                return "youtube_video_$videoId.mp4"
+                return "youtube_video_\${videoId}.mp4"
             }
 
             val lastPath = uri.lastPathSegment
@@ -642,6 +776,7 @@ fun DownloadScreen(
             )
         }
 
+        // URL Input Card
         ElevatedCard(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(16.dp)
@@ -662,13 +797,45 @@ fun DownloadScreen(
                     modifier = Modifier.fillMaxWidth(),
                     placeholder = { Text("https://example.com/video.mp4") },
                     singleLine = false,
-                    maxLines = 3
+                    maxLines = 3,
+                    trailingIcon = {
+                        if (urlInput.isNotEmpty()) {
+                            IconButton(onClick = {
+                                urlInput = ""
+                                probeResult = null
+                            }) {
+                                Icon(Icons.Default.Clear, contentDescription = "Clear")
+                            }
+                        } else {
+                            IconButton(onClick = {
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                if (clipboard.hasPrimaryClip() && clipboard.primaryClipDescription?.hasMimeType(ClipDescription.MIMETYPE_TEXT_PLAIN) == true) {
+                                    val item = clipboard.primaryClip?.getItemAt(0)
+                                    val text = item?.text?.toString() ?: ""
+                                    if (text.startsWith("http")) {
+                                        urlInput = text
+                                    }
+                                }
+                            }) {
+                                Icon(Icons.Default.ContentPaste, contentDescription = "Paste")
+                            }
+                        }
+                    }
                 )
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
+                    TextButton(
+                        onClick = {
+                            urlInput = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+                        }
+                    ) {
+                        Text("Use MP4 Sample")
+                    }
+
                     Button(
                         onClick = {
                             if (urlInput.isNotBlank()) {
@@ -678,7 +845,7 @@ fun DownloadScreen(
                                     try {
                                         probeResult = downloader.probeUrl(urlInput.trim())
                                     } catch (e: Exception) {
-                                        errorMessage = "Failed: \${e.message}"
+                                        errorMessage = "Failed to inspect URL: \${e.message}"
                                     } finally {
                                         isProbing = false
                                     }
@@ -687,11 +854,296 @@ fun DownloadScreen(
                         },
                         enabled = urlInput.isNotBlank() && !isProbing
                     ) {
-                        Text(if (isProbing) "Inspecting..." else "Inspect Link")
+                        if (isProbing) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.onPrimary
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text("Checking...")
+                        } else {
+                            Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Inspect Link")
+                        }
                     }
                 }
             }
         }
+
+        // Destination Folder Card (Storage Access Framework)
+        ElevatedCard(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp)
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = "Download Destination",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = "Files are written directly into your selected Android folder via Storage Access Framework.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable { folderPickerLauncher.launch(null) }
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                        .padding(12.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Folder,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(28.dp)
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = chosenFolderName,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = if (chosenFolderUri != null) "Folder Selected (Permanent Access)" else "Tap to choose folder",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Icon(Icons.Default.ChevronRight, contentDescription = null)
+                    }
+                }
+            }
+        }
+
+        // Probed Media Information & Download Trigger
+        AnimatedVisibility(visible = probeResult != null) {
+            probeResult?.let { result ->
+                ElevatedCard(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.elevatedCardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            val icon = when (result.mediaType) {
+                                MediaType.VIDEO_MP4 -> Icons.Default.Movie
+                                MediaType.AUDIO_MP3 -> Icons.Default.Audiotrack
+                                MediaType.IMAGE -> Icons.Default.Image
+                                else -> Icons.Default.InsertDriveFile
+                            }
+                            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                            Text(
+                                text = result.fileName,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            Column {
+                                Text("Type", style = MaterialTheme.typography.bodySmall)
+                                Text(result.mimeType, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                            }
+                            Column {
+                                Text("Size", style = MaterialTheme.typography.bodySmall)
+                                Text(
+                                    if (result.contentLength > 0) formatBytes(result.contentLength) else "Stream / Unknown",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+
+                        // Download Action Button
+                        Button(
+                            onClick = {
+                                if (chosenFolderUri == null) {
+                                    folderPickerLauncher.launch(null)
+                                } else {
+                                    downloadStatus = DownloadStatus.DOWNLOADING
+                                    isCancelled = false
+                                    downloadProgress = 0f
+
+                                    val targetDownloadUrl = result.directStreamUrl ?: urlInput.trim()
+
+                                    // Start Foreground Service for reliable background download
+                                    val serviceIntent = Intent(context, DownloadForegroundService::class.java).apply {
+                                        action = DownloadForegroundService.ACTION_START
+                                        putExtra(DownloadForegroundService.EXTRA_URL, targetDownloadUrl)
+                                        putExtra(DownloadForegroundService.EXTRA_TARGET_DIR, chosenFolderUri)
+                                        putExtra(DownloadForegroundService.EXTRA_FILE_NAME, result.fileName)
+                                        putExtra(DownloadForegroundService.EXTRA_MIME_TYPE, result.mimeType)
+                                    }
+                                    context.startForegroundService(serviceIntent)
+
+                                    // In-app progress observation
+                                    scope.launch {
+                                        try {
+                                            downloader.downloadToFile(
+                                                url = targetDownloadUrl,
+                                                targetDirUri = Uri.parse(chosenFolderUri),
+                                                fileName = result.fileName,
+                                                mimeType = result.mimeType,
+                                                onProgress = { read, total, speed ->
+                                                    downloadedBytes = read
+                                                    totalBytes = total
+                                                    downloadSpeed = speed
+                                                    if (total > 0) {
+                                                        downloadProgress = (read.toFloat() / total.toFloat()).coerceIn(0f, 1f)
+                                                    }
+                                                },
+                                                isCancelled = { isCancelled }
+                                            )
+                                            downloadStatus = DownloadStatus.COMPLETED
+                                        } catch (e: Exception) {
+                                            if (isCancelled) {
+                                                downloadStatus = DownloadStatus.CANCELLED
+                                            } else {
+                                                downloadStatus = DownloadStatus.FAILED
+                                                errorMessage = e.message
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = downloadStatus != DownloadStatus.DOWNLOADING
+                        ) {
+                            Icon(Icons.Default.Download, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text(if (chosenFolderUri == null) "Select Folder & Download" else "Start Download")
+                        }
+                    }
+                }
+            }
+        }
+
+        // Live Download Progress Box
+        AnimatedVisibility(visible = downloadStatus == DownloadStatus.DOWNLOADING || downloadStatus == DownloadStatus.COMPLETED) {
+            ElevatedCard(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (downloadStatus == DownloadStatus.COMPLETED) "Download Complete!" else "Downloading...",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = if (downloadStatus == DownloadStatus.COMPLETED) "100%" else "\${(downloadProgress * 100).toInt()}%",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    LinearProgressIndicator(
+                        progress = { if (downloadStatus == DownloadStatus.COMPLETED) 1f else downloadProgress },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(8.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "\${formatBytes(downloadedBytes)} / \${if (totalBytes > 0) formatBytes(totalBytes) else "..."}",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Text(
+                            text = if (downloadSpeed > 0) formatSpeed(downloadSpeed) else "",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+
+                    if (downloadStatus == DownloadStatus.DOWNLOADING) {
+                        OutlinedButton(
+                            onClick = {
+                                isCancelled = true
+                                downloadStatus = DownloadStatus.CANCELLED
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.Close, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Cancel Download")
+                        }
+                    }
+                }
+            }
+        }
+
+        // Error Banner
+        AnimatedVisibility(visible = errorMessage != null) {
+            errorMessage?.let { error ->
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.errorContainer
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+                        Text(
+                            text = error,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun formatBytes(bytes: Long): String {
+    return when {
+        bytes >= 1024 * 1024 * 1024 -> String.format("%.2f GB", bytes / (1024.0 * 1024.0 * 1024.0))
+        bytes >= 1024 * 1024 -> String.format("%.1f MB", bytes / (1024.0 * 1024.0))
+        bytes >= 1024 -> String.format("%.0f KB", bytes / 1024.0)
+        else -> "$bytes B"
+    }
+}
+
+private fun formatSpeed(bytesPerSec: Long): String {
+    return when {
+        bytesPerSec >= 1024 * 1024 -> String.format("%.1f MB/s", bytesPerSec / (1024.0 * 1024.0))
+        bytesPerSec >= 1024 -> String.format("%.0f KB/s", bytesPerSec / 1024.0)
+        else -> "$bytesPerSec B/s"
     }
 }
 `},{path:`app/src/main/kotlin/com/mediadrop/app/service/DownloadForegroundService.kt`,category:`kotlin`,description:`Foreground Service running downloads with notification shade progress`,content:`package com.mediadrop.app.service
@@ -885,6 +1337,7 @@ android {
     }
 
     compileOptions {
+        isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
@@ -895,6 +1348,16 @@ android {
 
     buildFeatures {
         compose = true
+    }
+
+    packaging {
+        resources {
+            excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            excludes += "META-INF/DEPENDENCIES"
+            excludes += "META-INF/LICENSE*"
+            excludes += "META-INF/NOTICE*"
+            excludes += "META-INF/INDEX.LIST"
+        }
     }
 }
 
@@ -911,14 +1374,48 @@ dependencies {
     implementation(libs.androidx.material3)
     implementation(libs.androidx.material.icons.extended)
 
+    // Networking for direct media download & chunked streaming
     implementation(libs.okhttp)
+
+    // Storage Access Framework (SAF) folder picker support
     implementation(libs.androidx.documentfile)
+
+    // DataStore Preferences for saving chosen folder URI
     implementation(libs.androidx.datastore.preferences)
+
+    // Background downloading service & worker
     implementation(libs.androidx.work.runtime.ktx)
     implementation(libs.kotlinx.coroutines.android)
 
+    // Desugaring for NewPipeExtractor compatibility on Android (includes NIO)
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs_nio:2.0.4")
+
+    // NewPipeExtractor core extractor library for native YouTube stream resolution on Android
+    implementation("com.github.TeamNewPipe.NewPipeExtractor:extractor:v0.24.8")
+
     debugImplementation(libs.androidx.ui.tooling)
 }
+`},{path:`app/proguard-rules.pro`,category:`gradle`,description:`ProGuard rules for NewPipeExtractor, OkHttp, and Coroutines`,content:`# Proguard rules for MediaDrop
+-keepattributes *Annotation*
+-keepclassmembers class * {
+    @androidx.room.* *;
+}
+
+# Keep OkHttp internals needed for chunked streaming
+-dontwarn okhttp3.**
+-dontwarn okio.**
+-keep class okhttp3.** { *; }
+
+# Keep Coroutines
+-keepnames class kotlinx.coroutines.internal.MainDispatcherFactory {}
+-keepnames class kotlinx.coroutines.CoroutineExceptionHandler {}
+
+## Rules for NewPipeExtractor
+-keep class org.mozilla.javascript.** { *; }
+-keep class org.mozilla.classfile.ClassFileWriter
+-dontwarn org.mozilla.javascript.tools.**
+-keep class org.schabi.newpipe.extractor.** { *; }
+-dontwarn org.schabi.newpipe.extractor.**
 `},{path:`build.gradle.kts`,category:`gradle`,description:`Root project build script configuring Android Gradle Plugin and Kotlin Compose`,content:`plugins {
     alias(libs.plugins.android.application) apply false
     alias(libs.plugins.kotlin.android) apply false
@@ -942,6 +1439,7 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        maven { url = java.net.URI("https://jitpack.io") }
     }
 }
 

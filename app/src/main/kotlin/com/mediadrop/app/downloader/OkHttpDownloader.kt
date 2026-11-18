@@ -31,13 +31,14 @@ class OkHttpDownloader(private val client: OkHttpClient) : Downloader() {
 
         builder.method(httpMethod, body)
 
-        val res = client.newCall(builder.build()).execute()
-        val responseBody = res.body?.string() ?: ""
-        val responseHeaders = ConcurrentHashMap<String, List<String>>()
-        res.headers.toMultimap().forEach { (k, v) ->
-            responseHeaders[k] = v
-        }
+        return client.newCall(builder.build()).execute().use { res ->
+            val responseBody = res.body?.string() ?: ""
+            val responseHeaders = ConcurrentHashMap<String, List<String>>()
+            res.headers.toMultimap().forEach { (k, v) ->
+                responseHeaders[k] = v
+            }
 
-        return Response(res.code, res.message, responseHeaders, responseBody, res.request.url.toString())
+            Response(res.code, res.message, responseHeaders, responseBody, res.request.url.toString())
+        }
     }
 }

@@ -59,26 +59,51 @@ class HttpDownloader(private val context: Context) {
                 val streamInfo = StreamInfo.getInfo(ServiceList.YouTube, trimmed)
                 val rawTitle = streamInfo.name ?: "youtube_video"
                 val cleanTitle = rawTitle.replace(Regex("[/\\\\?%*:|\"<>]"), "_").trim()
-                val fileName = if (cleanTitle.endsWith(".mp4", ignoreCase = true)) cleanTitle else "$cleanTitle.mp4"
+                    .ifBlank { "youtube_video" }
 
                 // Extract best progressive MP4 stream (muxed video + audio)
-                val bestVideoStream = streamInfo.videoStreams
+                val usableVideoStreams = streamInfo.videoStreams.filter {
+                    it.isUrl && !it.content.isNullOrBlank()
+                }
+                val bestVideoStream = usableVideoStreams
                     .filter { it.format?.name.equals("MP4", ignoreCase = true) }
-                    .maxByOrNull { it.resolution ?: "" }
-                    ?: streamInfo.videoStreams.firstOrNull()
+                    .maxByOrNull { it.height }
+                    ?: usableVideoStreams.maxByOrNull { it.height }
 
-                val streamUrl = bestVideoStream?.content ?: trimmed
+                if (bestVideoStream != null) {
+                    val fileName = if (cleanTitle.endsWith(".mp4", ignoreCase = true)) cleanTitle else "$cleanTitle.mp4"
+                    val contentLength = bestVideoStream.itagItem?.contentLength?.takeIf { it > 0L } ?: -1L
+                    return@withContext ProbeResult(
+                        fileName = fileName,
+                        mimeType = "video/mp4",
+                        mediaType = MediaType.VIDEO_MP4,
+                        contentLength = contentLength,
+                        directStreamUrl = bestVideoStream.content,
+                        isYouTube = true
+                    )
+                }
 
-                return@withContext ProbeResult(
-                    fileName = fileName,
-                    mimeType = "video/mp4",
-                    mediaType = MediaType.VIDEO_MP4,
-                    contentLength = bestVideoStream?.fileSize ?: 25_000_000L,
-                    directStreamUrl = streamUrl,
-                    isYouTube = true
-                )
-            } catch (_: Exception) {
-                // If NewPipe extraction encounters bot challenge, fallback to direct derivation
+                // Fallback to best direct audio stream if no progressive muxed video stream is available
+                val bestAudioStream = streamInfo.audioStreams
+                    .filter { it.isUrl && !it.content.isNullOrBlank() }
+                    .maxByOrNull { it.averageBitrate }
+
+                if (bestAudioStream != null) {
+                    val fileName = if (cleanTitle.endsWith(".m4a", ignoreCase = true)) cleanTitle else "$cleanTitle.m4a"
+                    val contentLength = bestAudioStream.itagItem?.contentLength?.takeIf { it > 0L } ?: -1L
+                    return@withContext ProbeResult(
+                        fileName = fileName,
+                        mimeType = "audio/mp4",
+                        mediaType = MediaType.AUDIO_MP3,
+                        contentLength = contentLength,
+                        directStreamUrl = bestAudioStream.content,
+                        isYouTube = true
+                    )
+                }
+
+                throw IllegalStateException("No downloadable progressive streams found for this video")
+            } catch (e: Exception) {
+                throw IllegalStateException("YouTube extraction failed: ${e.message ?: "Unknown error"}", e)
             }
         }
 

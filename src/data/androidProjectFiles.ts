@@ -34,13 +34,10 @@ jobs:
         with:
           gradle-version: '8.11.1'
 
-      - name: Grant execute permission for gradlew
-        run: chmod +x gradlew
-
       # Step 1: Build Debug APK (No keystore needed - ready to install on Android immediately)
       - name: Build Debug APK
         run: |
-          ./gradlew assembleDebug --no-daemon --stacktrace
+          gradle assembleDebug --no-daemon --stacktrace
 
       - name: Verify Debug APK Output
         run: |
@@ -75,7 +72,7 @@ jobs:
           if [ -f "app/keystore/release.jks" ]; then
             export SIGNING_KEYSTORE_PATH="keystore/release.jks"
           fi
-          ./gradlew assembleRelease --no-daemon --stacktrace
+          gradle assembleRelease --no-daemon --stacktrace
 
       - name: Verify Release APK Output
         run: |
@@ -452,14 +449,15 @@ class OkHttpDownloader(private val client: OkHttpClient) : Downloader() {
 
         builder.method(httpMethod, body)
 
-        val res = client.newCall(builder.build()).execute()
-        val responseBody = res.body?.string() ?: ""
-        val responseHeaders = ConcurrentHashMap<String, List<String>>()
-        res.headers.toMultimap().forEach { (k, v) ->
-            responseHeaders[k] = v
-        }
+        return client.newCall(builder.build()).execute().use { res ->
+            val responseBody = res.body?.string() ?: ""
+            val responseHeaders = ConcurrentHashMap<String, List<String>>()
+            res.headers.toMultimap().forEach { (k, v) ->
+                responseHeaders[k] = v
+            }
 
-        return Response(res.code, res.message, responseHeaders, responseBody, res.request.url.toString())
+            Response(res.code, res.message, responseHeaders, responseBody, res.request.url.toString())
+        }
     }
 }
 `,
@@ -529,26 +527,51 @@ class HttpDownloader(private val context: Context) {
                 val streamInfo = StreamInfo.getInfo(ServiceList.YouTube, trimmed)
                 val rawTitle = streamInfo.name ?: "youtube_video"
                 val cleanTitle = rawTitle.replace(Regex("[/\\\\?%*:|\"<>]"), "_").trim()
-                val fileName = if (cleanTitle.endsWith(".mp4", ignoreCase = true)) cleanTitle else "\${cleanTitle}.mp4"
+                    .ifBlank { "youtube_video" }
 
                 // Extract best progressive MP4 stream (muxed video + audio)
-                val bestVideoStream = streamInfo.videoStreams
+                val usableVideoStreams = streamInfo.videoStreams.filter {
+                    it.isUrl && !it.content.isNullOrBlank()
+                }
+                val bestVideoStream = usableVideoStreams
                     .filter { it.format?.name.equals("MP4", ignoreCase = true) }
-                    .maxByOrNull { it.resolution ?: "" }
-                    ?: streamInfo.videoStreams.firstOrNull()
+                    .maxByOrNull { it.height }
+                    ?: usableVideoStreams.maxByOrNull { it.height }
 
-                val streamUrl = bestVideoStream?.content ?: trimmed
+                if (bestVideoStream != null) {
+                    val fileName = if (cleanTitle.endsWith(".mp4", ignoreCase = true)) cleanTitle else "\${cleanTitle}.mp4"
+                    val contentLength = bestVideoStream.itagItem?.contentLength?.takeIf { it > 0L } ?: -1L
+                    return@withContext ProbeResult(
+                        fileName = fileName,
+                        mimeType = "video/mp4",
+                        mediaType = MediaType.VIDEO_MP4,
+                        contentLength = contentLength,
+                        directStreamUrl = bestVideoStream.content,
+                        isYouTube = true
+                    )
+                }
 
-                return@withContext ProbeResult(
-                    fileName = fileName,
-                    mimeType = "video/mp4",
-                    mediaType = MediaType.VIDEO_MP4,
-                    contentLength = bestVideoStream?.fileSize ?: 25_000_000L,
-                    directStreamUrl = streamUrl,
-                    isYouTube = true
-                )
-            } catch (_: Exception) {
-                // If NewPipe extraction encounters bot challenge, fallback to direct derivation
+                // Fallback to best direct audio stream if no progressive muxed video stream is available
+                val bestAudioStream = streamInfo.audioStreams
+                    .filter { it.isUrl && !it.content.isNullOrBlank() }
+                    .maxByOrNull { it.averageBitrate }
+
+                if (bestAudioStream != null) {
+                    val fileName = if (cleanTitle.endsWith(".m4a", ignoreCase = true)) cleanTitle else "\${cleanTitle}.m4a"
+                    val contentLength = bestAudioStream.itagItem?.contentLength?.takeIf { it > 0L } ?: -1L
+                    return@withContext ProbeResult(
+                        fileName = fileName,
+                        mimeType = "audio/mp4",
+                        mediaType = MediaType.AUDIO_MP3,
+                        contentLength = contentLength,
+                        directStreamUrl = bestAudioStream.content,
+                        isYouTube = true
+                    )
+                }
+
+                throw IllegalStateException("No downloadable progressive streams found for this video")
+            } catch (e: Exception) {
+                throw IllegalStateException("YouTube extraction failed: \${e.message ?: "Unknown error"}", e)
             }
         }
 
@@ -1416,6 +1439,7 @@ android {
             excludes += "META-INF/DEPENDENCIES"
             excludes += "META-INF/LICENSE*"
             excludes += "META-INF/NOTICE*"
+            excludes += "META-INF/INDEX.LIST"
         }
     }
 }
@@ -1449,8 +1473,8 @@ dependencies {
     // Desugaring for NewPipeExtractor compatibility on Android (includes NIO)
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs_nio:2.0.4")
 
-    // NewPipeExtractor for native YouTube stream resolution on Android
-    implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.24.6")
+    // NewPipeExtractor core extractor library for native YouTube stream resolution on Android
+    implementation("com.github.TeamNewPipe.NewPipeExtractor:extractor:v0.24.8")
 
     debugImplementation(libs.androidx.ui.tooling)
 }
